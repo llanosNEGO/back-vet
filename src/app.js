@@ -4,9 +4,9 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 require('dotenv').config();
 
-// Importar database y rutas
 const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/auth');
+const userRoutes = require('./routes/users');
 
 const app = express();
 
@@ -28,15 +28,20 @@ app.use(async (req, res, next) => {
   }
 });
 
-// Rutas
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 
 // Ruta de prueba
 app.get('/', async (req, res) => {
   const dbStatus = await testConnection();
   res.json({ 
-    message: 'API de autenticación funcionando correctamente',
+    message: 'API de veterinaria funcionando correctamente',
     database: dbStatus ? 'Conectado' : 'Desconectado',
+    endpoints: {
+      auth: '/api/auth',
+      users: '/api/users',
+      health: '/api/health'
+    },
     timestamp: new Date().toISOString()
   });
 });
@@ -61,8 +66,7 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// CORRECCIÓN: Manejo de rutas no encontradas
-app.all('*', (req, res) => {
+app.use((req, res, next) => {
   res.status(404).json({
     success: false,
     error: 'Ruta no encontrada',
