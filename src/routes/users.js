@@ -10,11 +10,7 @@ const logRequest = (req, res, next) => {
 
 router.use(logRequest);
 
-router.get('/health', userController.healthCheck);
-
 router.get('/', userController.getAllUsers);
-
-router.get('/stats', userController.getUserStats);
 
 router.get('/search', userController.searchUsers);
 

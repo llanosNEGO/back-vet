@@ -79,48 +79,6 @@ const userController = {
     }
   },
 
-  // Obtener estadísticas de usuarios
-  getUserStats: async (req, res) => {
-    try {
-      const stats = await User.getStats();
-      
-      res.json({
-        success: true,
-        data: stats,
-        message: 'Estadísticas de usuarios obtenidas correctamente'
-      });
-    } catch (error) {
-      console.error('Error en getUserStats:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Error al obtener estadísticas'
-      });
-    }
-  },
-
-  // Health check específico para usuarios
-  healthCheck: async (req, res) => {
-    try {
-      // Probar conexión a la base de datos contando usuarios
-      const stats = await User.getStats();
-      
-      res.json({
-        success: true,
-        message: 'Servicio de usuarios funcionando correctamente',
-        database: 'Conectado',
-        totalUsers: stats.total_users,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Servicio de usuarios con problemas',
-        database: 'Desconectado',
-        error: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
-  }
 };
 
 module.exports = userController;

@@ -7,6 +7,7 @@ require('dotenv').config();
 const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
+const pedidosRoutes = require('./routes/pedidos'); // Nueva ruta
 
 const app = express();
 
@@ -28,8 +29,10 @@ app.use(async (req, res, next) => {
   }
 });
 
+// Rutas
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/pedidos', pedidosRoutes); // Nueva ruta agregada
 
 // Ruta de prueba
 app.get('/', async (req, res) => {
@@ -40,30 +43,11 @@ app.get('/', async (req, res) => {
     endpoints: {
       auth: '/api/auth',
       users: '/api/users',
+      pedidos: '/api/pedidos', // Nuevo endpoint agregado
       health: '/api/health'
     },
     timestamp: new Date().toISOString()
   });
-});
-
-// Ruta para verificar estado
-app.get('/api/health', async (req, res) => {
-  try {
-    const dbStatus = await testConnection();
-    res.json({
-      status: 'OK',
-      database: dbStatus ? 'Connected' : 'Disconnected',
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development'
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'Error',
-      database: 'Disconnected',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
 });
 
 app.use((req, res, next) => {

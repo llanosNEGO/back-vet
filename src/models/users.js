@@ -78,23 +78,6 @@ class User {
     }
   }
 
-  // Buscar usuarios por nombre
-  static async searchByName(name) {
-    try {
-      const query = `
-        SELECT 
-          id, names, dni, phone, email, avatar,
-          created_at, updated_at
-        FROM clients_web 
-        WHERE names LIKE ?
-        ORDER BY names
-      `;
-      const users = await executeQuery(query, [`%${name}%`]);
-      return users;
-    } catch (error) {
-      throw new Error(`Error al buscar usuarios: ${error.message}`);
-    }
-  }
 
 }
 
