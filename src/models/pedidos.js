@@ -1,7 +1,96 @@
-const { executeQuery } = require('../config/database');
+// models/pedidos.js
+const { executeQuery, getConnection } = require('../config/database');
 
 class Pedidos {
 
+    static async create(pedidoData) {
+        let connection;
+        try {
+            // Obtener una conexión del pool
+            connection = await getConnection();
+            
+            // Iniciar transacción
+            await connection.beginTransaction();
+
+            console.log('Insertando pedido principal...');
+            
+            // 1. Insertar el pedido principal
+            const queryPedido = `
+                INSERT INTO pedidos_web (
+                    id_cliente, subtotal, total, direccion_envio, 
+                    telefono_contacto, notas, estado
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            `;
+            
+            const [pedidoResult] = await connection.execute(queryPedido, [
+                pedidoData.id_cliente,
+                pedidoData.subtotal,
+                pedidoData.total,
+                pedidoData.direccion_envio,
+                pedidoData.telefono_contacto,
+                pedidoData.notas || '',
+                pedidoData.estado || 'pendiente'
+            ]);
+
+            const id_pedido = pedidoResult.insertId;
+            console.log(`Pedido principal creado con ID: ${id_pedido}`);
+
+            // 2. Insertar los detalles del pedido
+            if (pedidoData.detalles && pedidoData.detalles.length > 0) {
+                console.log(`Insertando ${pedidoData.detalles.length} detalles...`);
+                
+                const queryDetalle = `
+                    INSERT INTO detallepedidos_web (
+                        id_pedido, id_producto, cantidad, precio_unitario,
+                        subtotal_linea, marca, descripcion, descrip_corta,
+                        categoria, imagen
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `;
+
+                for (const detalle of pedidoData.detalles) {
+                    await connection.execute(queryDetalle, [
+                        id_pedido,
+                        detalle.id_producto,
+                        detalle.cantidad,
+                        detalle.precio_unitario,
+                        detalle.subtotal_linea,
+                        detalle.marca || '',
+                        detalle.descripcion || '',
+                        detalle.descrip_corta || '',
+                        detalle.categoria || '',
+                        detalle.imagen || ''
+                    ]);
+                }
+                console.log('Detalles insertados correctamente');
+            } else {
+                console.log('No hay detalles para insertar');
+            }
+
+            // Confirmar transacción
+            await connection.commit();
+            console.log('Transacción completada exitosamente');
+            
+            return id_pedido;
+
+        } catch (error) {
+            // Revertir transacción en caso de error
+            if (connection) {
+                await connection.rollback();
+                console.log('Transacción revertida debido a error');
+            }
+            
+            console.error('Error detallado en create pedido:', error);
+            throw new Error(`Error al crear pedido: ${error.message}`);
+            
+        } finally {
+            // Liberar conexión
+            if (connection) {
+                connection.release();
+            }
+        }
+    }
+
+    // ... los otros métodos permanecen igual, pero asegúrate de que usen executeQuery en lugar de connection
     static async findByPedidosByClient(id_cliente) {
         try {
             const query = `
@@ -10,7 +99,7 @@ class Pedidos {
                     c.names as nombre_cliente,
                     c.email,
                     c.phone
-                FROM pedidosweb pw
+                FROM pedidos_web pw
                 INNER JOIN clients_web c ON pw.id_cliente = c.id
                 WHERE pw.id_cliente = ?
                 ORDER BY pw.fecha_pedido DESC
@@ -31,7 +120,7 @@ class Pedidos {
                     c.email,
                     c.phone,
                     c.dni
-                FROM pedidosweb pw
+                FROM pedidos_web pw
                 INNER JOIN clients_web c ON pw.id_cliente = c.id
                 WHERE pw.id_pedido = ?
             `;
@@ -49,8 +138,8 @@ class Pedidos {
                     dp.*,
                     pw.id_cliente,
                     pw.estado as estado_pedido
-                FROM detallepedidosweb dp
-                INNER JOIN pedidosweb pw ON dp.id_pedido = pw.id_pedido
+                FROM detallepedidos_web dp
+                INNER JOIN pedidos_web pw ON dp.id_pedido = pw.id_pedido
                 WHERE dp.id_pedido = ?
             `;
             const detalles = await executeQuery(query, [id_pedido]);
@@ -60,86 +149,10 @@ class Pedidos {
         }
     }
 
-    static async create(pedidoData) {
-        try {
-            const connection = await executeQuery.getConnection();
-            
-            try {
-                await executeQuery.beginTransaction(connection);
-
-                // 1. Insertar el pedido principal
-                const queryPedido = `
-                    INSERT INTO pedidosweb (
-                        id_cliente, subtotal, total, direccion_envio, 
-                        telefono_contacto, notas, estado
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                `;
-                
-                const pedidoResult = await executeQuery.query({
-                    sql: queryPedido,
-                    values: [
-                        pedidoData.id_cliente,
-                        pedidoData.subtotal,
-                        pedidoData.total,
-                        pedidoData.direccion_envio,
-                        pedidoData.telefono_contacto,
-                        pedidoData.notas || '',
-                        pedidoData.estado || 'pendiente'
-                    ],
-                    connection
-                });
-
-                const id_pedido = pedidoResult.insertId;
-
-                // 2. Insertar los detalles del pedido
-                if (pedidoData.detalles && pedidoData.detalles.length > 0) {
-                    const queryDetalle = `
-                        INSERT INTO detallepedidosweb (
-                            id_pedido, id_producto, cantidad, precio_unitario,
-                            subtotal_linea, marca, descripcion, descrip_corta,
-                            categoria, imagen
-                        ) VALUES ?
-                    `;
-
-                    const detallesValues = pedidoData.detalles.map(detalle => [
-                        id_pedido,
-                        detalle.id_producto,
-                        detalle.cantidad,
-                        detalle.precio_unitario,
-                        detalle.subtotal_linea,
-                        detalle.marca || '',
-                        detalle.descripcion || '',
-                        detalle.descrip_corta || '',
-                        detalle.categoria || '',
-                        detalle.imagen || ''
-                    ]);
-
-                    await executeQuery.query({
-                        sql: queryDetalle,
-                        values: [detallesValues],
-                        connection
-                    });
-                }
-
-                await executeQuery.commit(connection);
-                return id_pedido;
-
-            } catch (error) {
-                await executeQuery.rollback(connection);
-                throw error;
-            } finally {
-                connection.release();
-            }
-
-        } catch (error) {
-            throw new Error(`Error al crear pedido: ${error.message}`);
-        }
-    }
-
     static async updateEstado(id_pedido, nuevoEstado) {
         try {
             const query = `
-                UPDATE pedidosweb 
+                UPDATE pedidos_web 
                 SET estado = ? 
                 WHERE id_pedido = ?
             `;
@@ -158,7 +171,7 @@ class Pedidos {
                     c.names as nombre_cliente,
                     c.email,
                     c.phone
-                FROM pedidosweb pw
+                FROM pedidos_web pw
                 INNER JOIN clients_web c ON pw.id_cliente = c.id
                 WHERE 1=1
             `;
@@ -226,7 +239,7 @@ class Pedidos {
                     AVG(total) as promedio_pedido,
                     estado,
                     COUNT(*) as cantidad_por_estado
-                FROM pedidosweb
+                FROM pedidos_web
                 GROUP BY estado
             `;
             const estadisticas = await executeQuery(query);
@@ -237,38 +250,35 @@ class Pedidos {
     }
 
     static async delete(id_pedido) {
+        let connection;
         try {
-            const connection = await executeQuery.getConnection();
-            
-            try {
-                await executeQuery.beginTransaction(connection);
+            connection = await getConnection();
+            await connection.beginTransaction();
 
-                // Eliminar detalles primero (por la FK)
-                await executeQuery.query({
-                    sql: 'DELETE FROM detallepedidosweb WHERE id_pedido = ?',
-                    values: [id_pedido],
-                    connection
-                });
+            // Eliminar detalles primero (por la FK)
+            await connection.execute(
+                'DELETE FROM detallepedidos_web WHERE id_pedido = ?',
+                [id_pedido]
+            );
 
-                // Eliminar pedido
-                const result = await executeQuery.query({
-                    sql: 'DELETE FROM pedidosweb WHERE id_pedido = ?',
-                    values: [id_pedido],
-                    connection
-                });
+            // Eliminar pedido
+            const [result] = await connection.execute(
+                'DELETE FROM pedidos_web WHERE id_pedido = ?',
+                [id_pedido]
+            );
 
-                await executeQuery.commit(connection);
-                return result.affectedRows > 0;
-
-            } catch (error) {
-                await executeQuery.rollback(connection);
-                throw error;
-            } finally {
-                connection.release();
-            }
+            await connection.commit();
+            return result.affectedRows > 0;
 
         } catch (error) {
+            if (connection) {
+                await connection.rollback();
+            }
             throw new Error(`Error al eliminar pedido: ${error.message}`);
+        } finally {
+            if (connection) {
+                connection.release();
+            }
         }
     }
 }
