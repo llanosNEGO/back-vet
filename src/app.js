@@ -5,9 +5,8 @@ const morgan = require('morgan');
 require('dotenv').config();
 
 const { testConnection } = require('./config/database');
-const authRoutes = require('./routes/auth');
-const userRoutes = require('./routes/users');
 const pedidosRoutes = require('./routes/pedidos'); // Nueva ruta
+const authRoutes = require('./routes/auth');
 
 const app = express();
 
@@ -30,9 +29,8 @@ app.use(async (req, res, next) => {
 });
 
 // Rutas
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
 app.use('/api/pedidos', pedidosRoutes); // Nueva ruta agregada
+app.use('/api/auth', authRoutes);
 
 // Ruta de prueba
 app.get('/', async (req, res) => {
@@ -41,9 +39,8 @@ app.get('/', async (req, res) => {
     message: 'API de veterinaria funcionando correctamente',
     database: dbStatus ? 'Conectado' : 'Desconectado',
     endpoints: {
-      auth: '/api/auth',
-      users: '/api/users',
       pedidos: '/api/pedidos', // Nuevo endpoint agregado
+      auth_google: '/api/auth/google',
       health: '/api/health'
     },
     timestamp: new Date().toISOString()
