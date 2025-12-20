@@ -12,28 +12,63 @@ class Pedidos {
             // Iniciar transacción
             await connection.beginTransaction();
 
-            console.log('Insertando pedido principal...');
+            console.log('Insertando pedido principal con datos de pago...');
+            console.log('Método de pago recibido:', pedidoData.metodo_pago);
             
-            // 1. Insertar el pedido principal
+            // 1. Insertar el pedido principal CON LOS NUEVOS CAMPOS
             const queryPedido = `
                 INSERT INTO pedidos_web (
-                    id_cliente, subtotal, total, direccion_envio, 
-                    telefono_contacto, notas, estado
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id_cliente, 
+                    cliente_nombre,
+                    cliente_dni,
+                    cliente_email,
+                    subtotal, 
+                    total, 
+                    direccion_envio, 
+                    telefono_contacto, 
+                    notas, 
+                    estado,
+                    metodo_pago,
+                    numero_operacion,
+                    comprobante_pago,
+                    nombre_comprobante,
+                    fecha_pago,
+                    estado_pago
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
             
+            // Determinar estado de pago según el método
+            let estado_pago = 'pendiente';
+            if (pedidoData.metodo_pago === 'efectivo') {
+                estado_pago = 'pendiente'; // Pago pendiente hasta entrega
+            } else if (pedidoData.metodo_pago === 'transferencia' || pedidoData.metodo_pago === 'yape') {
+                estado_pago = pedidoData.comprobante_pago ? 'por_verificar' : 'pendiente';
+            }
+
+            console.log('Estado de pago asignado:', estado_pago);
+
             const [pedidoResult] = await connection.execute(queryPedido, [
                 pedidoData.id_cliente,
+                pedidoData.cliente_nombre || '',
+                pedidoData.cliente_dni || '',
+                pedidoData.cliente_email || '',
                 pedidoData.subtotal,
                 pedidoData.total,
                 pedidoData.direccion_envio,
                 pedidoData.telefono_contacto,
                 pedidoData.notas || '',
-                pedidoData.estado || 'pendiente'
+                pedidoData.estado || 'pendiente',
+                // Nuevos campos de pago
+                pedidoData.metodo_pago || 'efectivo',
+                pedidoData.numero_operacion || null,
+                pedidoData.comprobante_pago || null,
+                pedidoData.nombre_comprobante || null,
+                pedidoData.fecha_pago ? new Date(pedidoData.fecha_pago) : null,
+                estado_pago
             ]);
 
             const id_pedido = pedidoResult.insertId;
-            console.log(`Pedido principal creado con ID: ${id_pedido}`);
+            console.log(`Pedido principal creado con ID: ${id_pedido}, Método: ${pedidoData.metodo_pago || 'efectivo'}`);
 
             // 2. Insertar los detalles del pedido
             if (pedidoData.detalles && pedidoData.detalles.length > 0) {
@@ -70,7 +105,12 @@ class Pedidos {
             await connection.commit();
             console.log('Transacción completada exitosamente');
             
-            return id_pedido;
+            return {
+                id_pedido: id_pedido,
+                metodo_pago: pedidoData.metodo_pago || 'efectivo',
+                estado_pago: estado_pago,
+                numero_operacion: pedidoData.numero_operacion || null
+            };
 
         } catch (error) {
             // Revertir transacción en caso de error
@@ -90,7 +130,6 @@ class Pedidos {
         }
     }
 
-    // ... los otros métodos permanecen igual, pero asegúrate de que usen executeQuery en lugar de connection
     static async findByPedidosByClient(id_cliente) {
         try {
             const query = `
@@ -98,7 +137,14 @@ class Pedidos {
                     pw.*,
                     c.names as nombre_cliente,
                     c.email,
-                    c.phone
+                    c.phone,
+                    -- Información de pago
+                    pw.metodo_pago,
+                    pw.estado_pago,
+                    pw.numero_operacion,
+                    pw.fecha_pago,
+                    -- Calcular días desde el pedido
+                    DATEDIFF(NOW(), pw.fecha_pedido) as dias_desde_pedido
                 FROM pedidos_web pw
                 INNER JOIN clients_web c ON pw.id_cliente = c.id
                 WHERE pw.id_cliente = ?
@@ -111,7 +157,106 @@ class Pedidos {
         }
     }
 
+    // Método para obtener un pedido específico con sus detalles
     static async findById(id_pedido) {
+        try {
+            const queryPedido = `
+                SELECT 
+                    pw.*,
+                    c.names as nombre_cliente,
+                    c.email,
+                    c.phone,
+                    c.dni,
+                    -- Información de pago completa
+                    pw.metodo_pago,
+                    pw.estado_pago,
+                    pw.numero_operacion,
+                    pw.comprobante_pago,
+                    pw.nombre_comprobante,
+                    pw.fecha_pago,
+                    pw.cliente_nombre,
+                    pw.cliente_dni,
+                    pw.cliente_email
+                FROM pedidos_web pw
+                INNER JOIN clients_web c ON pw.id_cliente = c.id
+                WHERE pw.id_pedido = ?
+            `;
+            
+            const pedido = await executeQuery(queryPedido, [id_pedido]);
+            
+            if (pedido.length === 0) {
+                return null;
+            }
+
+            // Obtener detalles del pedido
+            const queryDetalles = `
+                SELECT 
+                    dp.*
+                FROM detallepedidos_web dp
+                WHERE dp.id_pedido = ?
+                ORDER BY dp.id_detalle
+            `;
+            
+            const detalles = await executeQuery(queryDetalles, [id_pedido]);
+            
+            return {
+                ...pedido[0],
+                detalles: detalles
+            };
+            
+        } catch (error) {
+            throw new Error(`Error al buscar pedido por ID: ${error.message}`);
+        }
+    }
+
+    // Método para actualizar el estado de pago (para administradores)
+    static async updatePaymentStatus(id_pedido, estado_pago, observaciones = null) {
+        let connection;
+        try {
+            connection = await getConnection();
+            await connection.beginTransaction();
+
+            const query = `
+                UPDATE pedidos_web 
+                SET 
+                    estado_pago = ?,
+                    fecha_pago = CASE 
+                        WHEN ? = 'verificado' AND fecha_pago IS NULL THEN NOW()
+                        ELSE fecha_pago 
+                    END
+                WHERE id_pedido = ?
+            `;
+
+            await connection.execute(query, [estado_pago, estado_pago, id_pedido]);
+
+            // Registrar la actualización en un log si se desea
+            if (observaciones) {
+                const logQuery = `
+                    INSERT INTO logs_pagos (
+                        id_pedido, 
+                        estado_anterior, 
+                        estado_nuevo, 
+                        observaciones, 
+                        fecha_cambio
+                    ) VALUES (?, ?, ?, ?, NOW())
+                `;
+                // Nota: Necesitarías crear la tabla logs_pagos si no existe
+                // await connection.execute(logQuery, [id_pedido, estado_actual, estado_pago, observaciones]);
+            }
+
+            await connection.commit();
+            return true;
+            
+        } catch (error) {
+            if (connection) await connection.rollback();
+            throw new Error(`Error al actualizar estado de pago: ${error.message}`);
+        } finally {
+            if (connection) connection.release();
+        }
+    }
+
+    // Método para obtener pedidos por estado de pago (para administradores)
+    static async findByPaymentStatus(estado_pago) {
         try {
             const query = `
                 SELECT 
@@ -119,50 +264,23 @@ class Pedidos {
                     c.names as nombre_cliente,
                     c.email,
                     c.phone,
-                    c.dni
+                    COUNT(dp.id_detalle) as total_productos,
+                    SUM(dp.cantidad) as total_items
                 FROM pedidos_web pw
                 INNER JOIN clients_web c ON pw.id_cliente = c.id
-                WHERE pw.id_pedido = ?
+                LEFT JOIN detallepedidos_web dp ON pw.id_pedido = dp.id_pedido
+                WHERE pw.estado_pago = ?
+                GROUP BY pw.id_pedido
+                ORDER BY pw.fecha_pedido DESC
             `;
-            const pedidos = await executeQuery(query, [id_pedido]);
-            return pedidos[0] || null;
+            const pedidos = await executeQuery(query, [estado_pago]);
+            return pedidos;
         } catch (error) {
-            throw new Error(`Error al buscar pedido por ID: ${error.message}`);
+            throw new Error(`Error al buscar pedidos por estado de pago: ${error.message}`);
         }
     }
 
-    static async findDetalleByPedido(id_pedido) {
-        try {
-            const query = `
-                SELECT 
-                    dp.*,
-                    pw.id_cliente,
-                    pw.estado as estado_pedido
-                FROM detallepedidos_web dp
-                INNER JOIN pedidos_web pw ON dp.id_pedido = pw.id_pedido
-                WHERE dp.id_pedido = ?
-            `;
-            const detalles = await executeQuery(query, [id_pedido]);
-            return detalles;
-        } catch (error) {
-            throw new Error(`Error al buscar detalle del pedido: ${error.message}`);
-        }
-    }
-
-    static async updateEstado(id_pedido, nuevoEstado) {
-        try {
-            const query = `
-                UPDATE pedidos_web 
-                SET estado = ? 
-                WHERE id_pedido = ?
-            `;
-            const result = await executeQuery(query, [nuevoEstado, id_pedido]);
-            return result.affectedRows > 0;
-        } catch (error) {
-            throw new Error(`Error al actualizar estado del pedido: ${error.message}`);
-        }
-    }
-
+    // Método para obtener todos los pedidos (para administradores)
     static async findAll(filters = {}) {
         try {
             let query = `
@@ -170,117 +288,47 @@ class Pedidos {
                     pw.*,
                     c.names as nombre_cliente,
                     c.email,
-                    c.phone
+                    c.phone,
+                    COUNT(dp.id_detalle) as total_productos
                 FROM pedidos_web pw
                 INNER JOIN clients_web c ON pw.id_cliente = c.id
+                LEFT JOIN detallepedidos_web dp ON pw.id_pedido = dp.id_pedido
                 WHERE 1=1
             `;
-            const values = [];
-
-            // Filtros opcionales
-            if (filters.estado) {
-                query += ` AND pw.estado = ?`;
-                values.push(filters.estado);
+            
+            const params = [];
+            
+            // Aplicar filtros
+            if (filters.estado_pago) {
+                query += ` AND pw.estado_pago = ?`;
+                params.push(filters.estado_pago);
             }
-
+            
+            if (filters.metodo_pago) {
+                query += ` AND pw.metodo_pago = ?`;
+                params.push(filters.metodo_pago);
+            }
+            
             if (filters.fecha_desde) {
                 query += ` AND DATE(pw.fecha_pedido) >= ?`;
-                values.push(filters.fecha_desde);
+                params.push(filters.fecha_desde);
             }
-
+            
             if (filters.fecha_hasta) {
                 query += ` AND DATE(pw.fecha_pedido) <= ?`;
-                values.push(filters.fecha_hasta);
+                params.push(filters.fecha_hasta);
             }
-
-            if (filters.id_cliente) {
-                query += ` AND pw.id_cliente = ?`;
-                values.push(filters.id_cliente);
-            }
-
-            query += ` ORDER BY pw.fecha_pedido DESC`;
-
-            if (filters.limit) {
-                query += ` LIMIT ?`;
-                values.push(parseInt(filters.limit));
-            }
-
-            const pedidos = await executeQuery(query, values);
+            
+            query += ` GROUP BY pw.id_pedido ORDER BY pw.fecha_pedido DESC`;
+            
+            const pedidos = await executeQuery(query, params);
             return pedidos;
+            
         } catch (error) {
             throw new Error(`Error al buscar todos los pedidos: ${error.message}`);
         }
     }
 
-    static async getPedidoCompleto(id_pedido) {
-        try {
-            const pedido = await this.findById(id_pedido);
-            if (!pedido) {
-                return null;
-            }
-
-            const detalles = await this.findDetalleByPedido(id_pedido);
-            
-            return {
-                ...pedido,
-                detalles: detalles
-            };
-        } catch (error) {
-            throw new Error(`Error al obtener pedido completo: ${error.message}`);
-        }
-    }
-
-    static async getEstadisticas() {
-        try {
-            const query = `
-                SELECT 
-                    COUNT(*) as total_pedidos,
-                    SUM(total) as ingresos_totales,
-                    AVG(total) as promedio_pedido,
-                    estado,
-                    COUNT(*) as cantidad_por_estado
-                FROM pedidos_web
-                GROUP BY estado
-            `;
-            const estadisticas = await executeQuery(query);
-            return estadisticas;
-        } catch (error) {
-            throw new Error(`Error al obtener estadísticas: ${error.message}`);
-        }
-    }
-
-    static async delete(id_pedido) {
-        let connection;
-        try {
-            connection = await getConnection();
-            await connection.beginTransaction();
-
-            // Eliminar detalles primero (por la FK)
-            await connection.execute(
-                'DELETE FROM detallepedidos_web WHERE id_pedido = ?',
-                [id_pedido]
-            );
-
-            // Eliminar pedido
-            const [result] = await connection.execute(
-                'DELETE FROM pedidos_web WHERE id_pedido = ?',
-                [id_pedido]
-            );
-
-            await connection.commit();
-            return result.affectedRows > 0;
-
-        } catch (error) {
-            if (connection) {
-                await connection.rollback();
-            }
-            throw new Error(`Error al eliminar pedido: ${error.message}`);
-        } finally {
-            if (connection) {
-                connection.release();
-            }
-        }
-    }
 }
 
 module.exports = Pedidos;
