@@ -130,8 +130,7 @@ module.exports = () => {
       console.error('❌ ERROR en creación de pedido:');
       console.error('Mensaje:', error.message);
       console.error('Stack trace:', error.stack);
-      
-      // Respuesta de error
+
       res.status(500).json({
         success: false,
         error: 'Error al crear el pedido',
